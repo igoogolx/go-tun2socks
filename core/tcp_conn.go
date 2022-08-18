@@ -8,6 +8,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	M "github.com/sagernet/sing/common/metadata"
 	"io"
 	"math/rand"
 	"net"
@@ -60,8 +61,8 @@ type tcpConn struct {
 
 	pcb           *C.struct_tcp_pcb
 	handler       TCPConnHandler
-	remoteAddr    *net.TCPAddr
-	localAddr     *net.TCPAddr
+	remoteAddr    M.Socksaddr
+	localAddr     M.Socksaddr
 	connKeyArg    unsafe.Pointer
 	connKey       uint32
 	canWrite      *sync.Cond // Condition variable to implement TCP backpressure.
@@ -90,8 +91,8 @@ func newTCPConn(pcb *C.struct_tcp_pcb, handler TCPConnHandler) (TCPConn, error) 
 	conn := &tcpConn{
 		pcb:           pcb,
 		handler:       handler,
-		localAddr:     ParseTCPAddr(ipAddrNTOA(pcb.remote_ip), uint16(pcb.remote_port)),
-		remoteAddr:    ParseTCPAddr(ipAddrNTOA(pcb.local_ip), uint16(pcb.local_port)),
+		localAddr:     M.ParseSocksaddrHostPort(ipAddrNTOA(pcb.remote_ip), uint16(pcb.remote_port)),
+		remoteAddr:    M.ParseSocksaddrHostPort(ipAddrNTOA(pcb.local_ip), uint16(pcb.local_port)),
 		connKeyArg:    connKeyArg,
 		connKey:       connKey,
 		canWrite:      sync.NewCond(&sync.Mutex{}),
@@ -109,7 +110,7 @@ func newTCPConn(pcb *C.struct_tcp_pcb, handler TCPConnHandler) (TCPConn, error) 
 	conn.state = tcpConnecting
 	conn.Unlock()
 	go func() {
-		err := handler.Handle(TCPConn(conn), conn.remoteAddr)
+		err := handler.Handle(TCPConn(conn))
 		if err != nil {
 			conn.Abort()
 		} else {
