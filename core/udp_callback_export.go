@@ -6,6 +6,7 @@ package core
 */
 import "C"
 import (
+	M "github.com/sagernet/sing/common/metadata"
 	"unsafe"
 )
 
@@ -21,9 +22,9 @@ func udpRecvFn(arg unsafe.Pointer, pcb *C.struct_udp_pcb, p *C.struct_pbuf, addr
 		return
 	}
 
-	srcAddr := ParseUDPAddr(ipAddrNTOA(*addr), uint16(port))
-	dstAddr := ParseUDPAddr(ipAddrNTOA(*destAddr), uint16(destPort))
-	if srcAddr == nil || dstAddr == nil {
+	srcAddr := M.ParseSocksaddrHostPort(ipAddrNTOA(*addr), uint16(port))
+	dstAddr := M.ParseSocksaddrHostPort(ipAddrNTOA(*destAddr), uint16(destPort))
+	if !srcAddr.IsValid() || !dstAddr.IsValid() {
 		panic("invalid UDP address")
 	}
 

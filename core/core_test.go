@@ -3,7 +3,7 @@ package core
 import (
 	"bytes"
 	"encoding/hex"
-	"net"
+	M "github.com/sagernet/sing/common/metadata"
 	"sync"
 	"testing"
 )
@@ -34,11 +34,7 @@ type fakeUDPHandler struct {
 	packets chan []byte
 }
 
-func (h *fakeUDPHandler) Connect(conn UDPConn, target *net.UDPAddr) error {
-	return nil
-}
-
-func (h *fakeUDPHandler) ReceiveTo(conn UDPConn, data []byte, addr *net.UDPAddr) error {
+func (h *fakeUDPHandler) ReceiveTo(conn UDPConn, data []byte, addr M.Socksaddr) error {
 	h.packets <- data
 	return nil
 }

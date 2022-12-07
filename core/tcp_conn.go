@@ -8,6 +8,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	M "github.com/sagernet/sing/common/metadata"
 	"github.com/djherbis/buffer"
 	"github.com/djherbis/nio"
 	"io"
@@ -62,8 +63,8 @@ type tcpConn struct {
 
 	pcb           *C.struct_tcp_pcb
 	handler       TCPConnHandler
-	remoteAddr    *net.TCPAddr
-	localAddr     *net.TCPAddr
+	remoteAddr    M.Socksaddr
+	localAddr     M.Socksaddr
 	connKeyArg    unsafe.Pointer
 	connKey       uint32
 	canWrite      *sync.Cond // Condition variable to implement TCP backpressure.
@@ -93,8 +94,8 @@ func newTCPConn(pcb *C.struct_tcp_pcb, handler TCPConnHandler) (TCPConn, error) 
 	conn := &tcpConn{
 		pcb:           pcb,
 		handler:       handler,
-		localAddr:     ParseTCPAddr(ipAddrNTOA(pcb.remote_ip), uint16(pcb.remote_port)),
-		remoteAddr:    ParseTCPAddr(ipAddrNTOA(pcb.local_ip), uint16(pcb.local_port)),
+		localAddr:     M.ParseSocksaddrHostPort(ipAddrNTOA(pcb.remote_ip), uint16(pcb.remote_port)),
+		remoteAddr:    M.ParseSocksaddrHostPort(ipAddrNTOA(pcb.local_ip), uint16(pcb.local_port)),
 		connKeyArg:    connKeyArg,
 		connKey:       connKey,
 		canWrite:      sync.NewCond(&sync.Mutex{}),
@@ -112,11 +113,15 @@ func newTCPConn(pcb *C.struct_tcp_pcb, handler TCPConnHandler) (TCPConn, error) 
 	conn.state = tcpConnecting
 	conn.Unlock()
 	go func() {
-		err := handler.Handle(TCPConn(conn), conn.remoteAddr)
+		err := handler.Handle(TCPConn(conn))
 		if err != nil {
 			conn.Abort()
 		} else {
 			conn.Lock()
+			if conn.state != tcpConnecting {
+				conn.Unlock()
+				return
+			}
 			conn.state = tcpConnected
 			conn.Unlock()
 
@@ -161,11 +166,11 @@ func (conn *tcpConn) receiveCheck() error {
 	case tcpNewConn:
 		fallthrough
 	case tcpConnecting:
-		fallthrough
+		return NewLWIPError(LWIP_ERR_CONN)
 	case tcpAborting:
 		fallthrough
 	case tcpClosed:
-		return NewLWIPError(LWIP_ERR_CONN)
+		fallthrough
 	case tcpReceiveClosed:
 		fallthrough
 	case tcpClosing:
@@ -437,10 +442,15 @@ func (conn *tcpConn) abortInternal() {
 
 func (conn *tcpConn) Abort() {
 	conn.Lock()
-	defer conn.Unlock()
+	// If it's in tcpErrored state, the pcb was already freed.
+	if conn.state < tcpAborting {
+		conn.state = tcpAborting
+	}
+	conn.Unlock()
 
-	conn.state = tcpAborting
-	conn.canWrite.Broadcast()
+	lwipMutex.Lock()
+	conn.checkState()
+	lwipMutex.Unlock()
 }
 
 func (conn *tcpConn) Err(err error) {

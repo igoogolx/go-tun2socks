@@ -1,6 +1,7 @@
 package core
 
 import (
+	M "github.com/sagernet/sing/common/metadata"
 	"net"
 	"time"
 )
@@ -67,15 +68,15 @@ type TCPConn interface {
 // should be handled by a registered UDP proxy handler.
 type UDPConn interface {
 	// LocalAddr returns the local client network address.
-	LocalAddr() *net.UDPAddr
+	LocalAddr() M.Socksaddr
 
 	// ReceiveTo will be called when data arrives from TUN, and the received
 	// data should be sent to addr.
-	ReceiveTo(data []byte, addr *net.UDPAddr) error
+	ReceiveTo(data []byte, addr M.Socksaddr) error
 
 	// WriteFrom writes data to TUN, addr will be set as source address of
 	// UDP packets that output to TUN.
-	WriteFrom(data []byte, addr *net.UDPAddr) (int, error)
+	WriteFrom(data []byte, addr M.Socksaddr) (int, error)
 
 	// Close closes the connection.
 	Close() error

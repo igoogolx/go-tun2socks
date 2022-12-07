@@ -8,7 +8,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"net"
+	M "github.com/sagernet/sing/common/metadata"
 	"sync"
 	"unsafe"
 )
@@ -23,7 +23,7 @@ const (
 
 type udpPacket struct {
 	data []byte
-	addr *net.UDPAddr
+	addr M.Socksaddr
 }
 
 type udpConn struct {
@@ -31,45 +31,38 @@ type udpConn struct {
 
 	pcb       *C.struct_udp_pcb
 	handler   UDPConnHandler
-	localAddr *net.UDPAddr
+	localAddr M.Socksaddr
 	localIP   C.ip_addr_t
 	localPort C.u16_t
 	state     udpConnState
 	pending   chan *udpPacket
 }
 
-func newUDPConn(pcb *C.struct_udp_pcb, handler UDPConnHandler, localIP C.ip_addr_t, localPort C.u16_t, localAddr, remoteAddr *net.UDPAddr) (UDPConn, error) {
+func newUDPConn(pcb *C.struct_udp_pcb, handler UDPConnHandler, localIP C.ip_addr_t, localPort C.u16_t, localAddr, remoteAddr M.Socksaddr) (UDPConn, error) {
 	conn := &udpConn{
 		handler:   handler,
 		pcb:       pcb,
 		localAddr: localAddr,
 		localIP:   localIP,
 		localPort: localPort,
-		state:     udpConnecting,
-		pending:   make(chan *udpPacket, 1), // To hold the first packet on the connection
+		state:     udpConnected,
+		pending:   make(chan *udpPacket, 64), // To hold the early packets on the connection
 	}
 
 	go func() {
-		err := handler.Connect(conn, remoteAddr)
-		if err != nil {
-			conn.Close()
-		} else {
-			conn.Lock()
-			conn.state = udpConnected
-			conn.Unlock()
-			// Once connected, send all pending data.
-		DrainPending:
-			for {
-				select {
-				case pkt := <-conn.pending:
-					err := conn.handler.ReceiveTo(conn, pkt.data, pkt.addr)
-					if err != nil {
-						break DrainPending
-					}
-					continue DrainPending
-				default:
+
+	DrainPending:
+		for {
+			select {
+			case pkt := <-conn.pending:
+				err := conn.handler.ReceiveTo(conn, pkt.data, pkt.addr)
+				if err != nil {
 					break DrainPending
 				}
+				continue DrainPending
+			default:
+				conn.pending = nil
+				break DrainPending
 			}
 		}
 	}()
@@ -77,7 +70,7 @@ func newUDPConn(pcb *C.struct_udp_pcb, handler UDPConnHandler, localIP C.ip_addr
 	return conn, nil
 }
 
-func (conn *udpConn) LocalAddr() *net.UDPAddr {
+func (conn *udpConn) LocalAddr() M.Socksaddr {
 	return conn.localAddr
 }
 
@@ -98,7 +91,7 @@ func (conn *udpConn) checkState() error {
 
 // If the connection isn't ready yet, and there is room in the queue, make a copy
 // and hold onto it until the connection is ready.
-func (conn *udpConn) enqueueEarlyPacket(data []byte, addr *net.UDPAddr) bool {
+func (conn *udpConn) enqueueEarlyPacket(data []byte, addr M.Socksaddr) bool {
 	conn.Lock()
 	defer conn.Unlock()
 	if conn.state == udpConnecting {
@@ -113,7 +106,7 @@ func (conn *udpConn) enqueueEarlyPacket(data []byte, addr *net.UDPAddr) bool {
 	return false
 }
 
-func (conn *udpConn) ReceiveTo(data []byte, addr *net.UDPAddr) error {
+func (conn *udpConn) ReceiveTo(data []byte, addr M.Socksaddr) error {
 	if conn.enqueueEarlyPacket(data, addr) {
 		return nil
 	}
@@ -127,13 +120,16 @@ func (conn *udpConn) ReceiveTo(data []byte, addr *net.UDPAddr) error {
 	return nil
 }
 
-func (conn *udpConn) WriteFrom(data []byte, addr *net.UDPAddr) (int, error) {
+func (conn *udpConn) WriteFrom(data []byte, addr M.Socksaddr) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
 	if err := conn.checkState(); err != nil {
 		return 0, err
 	}
 	// FIXME any memory leaks?
 	cremoteIP := C.struct_ip_addr{}
-	if err := ipAddrATON(addr.IP.String(), &cremoteIP); err != nil {
+	if err := ipAddrATON(addr.AddrString(), &cremoteIP); err != nil {
 		return 0, err
 	}
 	buf := C.pbuf_alloc_reference(unsafe.Pointer(&data[0]), C.u16_t(len(data)), C.PBUF_ROM)
